@@ -28,6 +28,7 @@ bun install
 
 1. 设置环境变量
    - 复制 `.env.example` 文件为 `.env`
+   - 完整设置，兼容 openai 的 API 即可
    - 执行 `export $(cat .env | xargs)`
 
 ### 运行
