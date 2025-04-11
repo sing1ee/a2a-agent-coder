@@ -73,20 +73,6 @@ Tasks can be in one of the following states:
 
 ## Server Implementation
 
-### Setup
-
-1. Install dependencies:
-```bash
-bun install
-```
-
-2. Create a `.env` file with required configuration:
-```env
-OPENAI_API_KEY=sk-or-v1-xxxxxxx
-OPENAI_BASE_URL=https://openrouter.ai/api/v1
-OPENAI_MODEL=anthropic/claude-3.5-haiku
-```
-
 ### Core Components
 
 The server implementation consists of several key components:
@@ -97,48 +83,164 @@ The server implementation consists of several key components:
 4. **Utils (utils.ts)**: Utility functions
 5. **Error Handling (error.ts)**: Error definitions and handling
 
-### Running the Server
+### Basic Usage (Conceptual)
 
-```bash
-bun run src/server/index.ts
+```typescript
+import {
+  A2AServer,
+  InMemoryTaskStore,
+  TaskContext,
+  TaskYieldUpdate,
+} from "./index"; // Assuming imports from the server package
+
+// 1. Define your agent's logic as a TaskHandler
+async function* myAgentLogic(
+  context: TaskContext
+): AsyncGenerator<TaskYieldUpdate> {
+  console.log(`Handling task: ${context.task.id}`);
+  yield {
+    state: "working",
+    message: { role: "agent", parts: [{ text: "Processing..." }] },
+  };
+
+  // Simulate work...
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+
+  if (context.isCancelled()) {
+    console.log("Task cancelled!");
+    yield { state: "canceled" };
+    return;
+  }
+
+  // Yield an artifact
+  yield {
+    name: "result.txt",
+    mimeType: "text/plain",
+    parts: [{ text: `Task ${context.task.id} completed.` }],
+  };
+
+  // Yield final status
+  yield {
+    state: "completed",
+    message: { role: "agent", parts: [{ text: "Done!" }] },
+  };
+}
+
+// 2. Create and start the server
+const store = new InMemoryTaskStore(); // Or new FileStore()
+const server = new A2AServer(myAgentLogic, { taskStore: store });
+
+server.start(); // Starts listening on default port 41241
+
+console.log("A2A Server started.");
 ```
 
 The server will start on the configured port (default: 3000).
 
 ## Client Implementation
 
-### Setup
+### Key Features:
 
-1. Install dependencies:
-```bash
-bun install
-```
-
-### Core Components
-
-The client implementation includes:
-
-1. **Client (client.ts)**: Main client implementation for interacting with A2A servers
-2. **Error Handling**: Comprehensive error handling for A2A protocol errors
+- **JSON-RPC Communication:** Handles sending requests and receiving responses (both standard and streaming via Server-Sent Events) according to the JSON-RPC 2.0 specification.
+- **A2A Methods:** Implements standard A2A methods like `sendTask`, `sendTaskSubscribe`, `getTask`, `cancelTask`, `setTaskPushNotification`, `getTaskPushNotification`, and `resubscribeTask`.
+- **Error Handling:** Provides basic error handling for network issues and JSON-RPC errors.
+- **Streaming Support:** Manages Server-Sent Events (SSE) for real-time task updates (`sendTaskSubscribe`, `resubscribeTask`).
+- **Extensibility:** Allows providing a custom `fetch` implementation for different environments (e.g., Node.js).
 
 ### Basic Usage
 
 ```typescript
-import { A2AClient } from './client';
+import { A2AClient, Task, TaskQueryParams, TaskSendParams } from "./client"; // Import necessary types
+import { v4 as uuidv4 } from "uuid"; // Example for generating task IDs
 
-const client = new A2AClient('http://localhost:3000');
+const client = new A2AClient("http://localhost:41241"); // Replace with your server URL
 
-// Send a task
-const task = await client.sendTask({
-  id: 'task-1',
-  message: {
-    role: 'user',
-    parts: [{ text: 'Hello, agent!' }]
+async function run() {
+  try {
+    // Send a simple task (pass only params)
+    const taskId = uuidv4();
+    const sendParams: TaskSendParams = {
+      id: taskId,
+      message: { role: "user", parts: [{ text: "Hello, agent!" }] },
+    };
+    // Method now returns Task | null directly
+    const taskResult: Task | null = await client.sendTask(sendParams);
+    console.log("Send Task Result:", taskResult);
+
+    // Get task status (pass only params)
+    const getParams: TaskQueryParams = { id: taskId };
+    // Method now returns Task | null directly
+    const getTaskResult: Task | null = await client.getTask(getParams);
+    console.log("Get Task Result:", getTaskResult);
+  } catch (error) {
+    console.error("A2A Client Error:", error);
   }
-});
+}
 
-// Get task status
-const status = await client.getTask('task-1');
+run();
+```
+
+### Streaming Usage
+
+```typescript
+import {
+  A2AClient,
+  TaskStatusUpdateEvent,
+  TaskArtifactUpdateEvent,
+  TaskSendParams, // Use params type directly
+} from "./client"; // Adjust path if necessary
+import { v4 as uuidv4 } from "uuid";
+
+const client = new A2AClient("http://localhost:41241");
+
+async function streamTask() {
+  const streamingTaskId = uuidv4();
+  try {
+    console.log(`\n--- Starting streaming task ${streamingTaskId} ---`);
+    // Construct just the params
+    const streamParams: TaskSendParams = {
+      id: streamingTaskId,
+      message: { role: "user", parts: [{ text: "Stream me some updates!" }] },
+    };
+    // Pass only params to the client method
+    const stream = client.sendTaskSubscribe(streamParams);
+
+    // Stream now yields the event payloads directly
+    for await (const event of stream) {
+      // Type guard to differentiate events based on structure
+      if ("status" in event) {
+        // It's a TaskStatusUpdateEvent
+        const statusEvent = event as TaskStatusUpdateEvent; // Cast for clarity
+        console.log(
+          `[${streamingTaskId}] Status Update: ${statusEvent.status.state} - ${
+            statusEvent.status.message?.parts[0]?.text ?? "No message"
+          }`
+        );
+        if (statusEvent.final) {
+          console.log(`[${streamingTaskId}] Stream marked as final.`);
+          break; // Exit loop when server signals completion
+        }
+      } else if ("artifact" in event) {
+        // It's a TaskArtifactUpdateEvent
+        const artifactEvent = event as TaskArtifactUpdateEvent; // Cast for clarity
+        console.log(
+          `[${streamingTaskId}] Artifact Update: ${
+            artifactEvent.artifact.name ??
+            `Index ${artifactEvent.artifact.index}`
+          } - Part Count: ${artifactEvent.artifact.parts.length}`
+        );
+        // Process artifact content (e.g., artifactEvent.artifact.parts[0].text)
+      } else {
+        console.warn("Received unknown event structure:", event);
+      }
+    }
+    console.log(`--- Streaming task ${streamingTaskId} finished ---`);
+  } catch (error) {
+    console.error(`Error during streaming task ${streamingTaskId}:`, error);
+  }
+}
+
+streamTask();
 ```
 
 ## Running the Coder Demo
