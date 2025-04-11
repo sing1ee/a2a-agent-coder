@@ -30,6 +30,24 @@ interface JSONRPCMessage {
 }
 ```
 
+### Protocol Flow
+
+The following sequence diagram illustrates the main interaction flow of the A2A protocol:
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Server
+    participant Agent
+
+    Client->>Server: tasks/sendSubscribe
+    Server->>Agent: Forward task
+    Agent->>Server: Status update (working)
+    Server->>Client: Push status update
+    Agent->>Server: Status update (completed)
+    Server->>Client: Push final result
+```
+
 ### Core Methods
 
 The protocol supports several core methods:
