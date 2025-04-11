@@ -1,0 +1,25 @@
+{
+  "name": "a2a-agent-coder",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "a2a:cli": "npx tsx src/cli.ts",
+    "agents:coder": "npx tsx src/agents/coder/index.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.1",
+    "@types/node": "^22.14.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "openai": "^4.93.0"
+  }
+}
